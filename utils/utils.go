@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -159,10 +160,36 @@ func (c *FetchConfig) FetchFile(file string) ([]byte, int, bool, error) {
 			c.conditionalRequestLock.Unlock()
 		}
 	} else {
+		info, err := os.Stat(file)
+		if err != nil {
+			return nil, -1, false, err
+		}
+		if c.EnableLastModified && c.lastModified[file] == info.ModTime() {
+			return nil, -1, true, HttpNotModified{
+				File: file,
+			}
+		}
+		c.conditionalRequestLock.Lock()
+		c.lastModified[file] = info.ModTime()
+		c.conditionalRequestLock.Unlock()
 		f, err = os.Open(file)
 		if err != nil {
 			return nil, -1, false, err
 		}
+		hash := sha256.New()
+		if _, err := io.Copy(hash, f); err != nil {
+			return nil, -1, false, err 
+		}
+		sum := fmt.Sprintf("%x", hash.Sum(nil))
+		if c.EnableEtags && c.etags[file] == sum {
+			return nil, -1, true, IdenticalEtag{
+				File: file,
+				Etag: sum,
+			}
+		}
+		c.conditionalRequestLock.Lock()
+		c.etags[file] = sum
+		c.conditionalRequestLock.Unlock()
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
