@@ -2,6 +2,7 @@ package rtrlib
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -522,7 +523,11 @@ func (s *Server) RequestNewVersion(c *Client, sessionId uint16, serial uint32) {
 }
 
 func (s *Server) Start(bind string) error {
-	tcplist, err := net.Listen("tcp", bind)
+	lc := net.ListenConfig{
+		KeepAlive: 60*time.Second,
+	}
+	tcplist, err := lc.Listen(context.Background(), "tcp", bind)
+	// net.Listen("tcp", bind)
 	if err != nil {
 		return err
 	}
@@ -532,12 +537,25 @@ func (s *Server) Start(bind string) error {
 var DisableBGPSec = flag.Bool("disable.bgpsec", false, "Disable sending out BGPSEC Router Keys")
 var DisableASPA = flag.Bool("disable.aspa", false, "Disable sending out ASPA objects")
 var EnableNODELAY = flag.Bool("enable.nodelay", false, "Force enable TCP NODELAY (Likely increases CPU)")
+var EnableKeepalive = flag.Int("tcp.keepalive", 0, "Enable TCP keepalive, delay in seconds")
 
 func (s *Server) acceptClientTCP(tcpconn net.Conn) error {
 	if !*EnableNODELAY {
 		tc, ok := tcpconn.(*net.TCPConn)
 		if ok {
 			tc.SetNoDelay(false)
+		}
+	}
+
+	if *EnableKeepalive > 0 {
+		tc, ok := tcpconn.(*net.TCPConn)
+		if ok {
+			if err := tc.SetKeepAlive(true); err != nil {
+				s.log.Errorf("failed to set keepalive: %s", err)
+			}
+			if err := tc.SetKeepAlivePeriod(time.Duration(*EnableKeepalive) * time.Second); err != nil {
+				s.log.Errorf("failed to set keepalive period: %s", err)
+			}
 		}
 	}
 
